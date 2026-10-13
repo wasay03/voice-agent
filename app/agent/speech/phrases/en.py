@@ -60,6 +60,11 @@ def reprompt(field: str, code: str, params: dict | None = None) -> str:
     return template.format(label=label, **params)
 
 
+def all_set(first_name: str) -> str:
+    """The closing line after a successful save (the brief asks for "You're all set, [First Name].")."""
+    return f"You're all set, {first_name}. Thanks for calling, and have a great day. Goodbye."
+
+
 # Spoken when saving the registration fails.
 SAVE_RETRY = "I'm having trouble saving that. Let me try once more."
 SAVE_FAILED = (

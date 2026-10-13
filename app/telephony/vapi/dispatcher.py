@@ -70,6 +70,8 @@ class VapiDispatcher:
                 # the result too, so the model knows exactly what the caller just heard.
                 if isinstance(result.get("speak"), str):
                     entry["message"] = {"type": "request-complete", "content": result["speak"]}
+                    if result.get("end_call"):  # closing lines: Vapi hangs up after saying them
+                        entry["message"]["endCallAfterSpokenEnabled"] = True
             results.append(entry)
         return {"results": results}
 

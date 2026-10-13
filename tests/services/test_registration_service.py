@@ -41,11 +41,18 @@ def full_draft(**overrides: Any) -> dict[str, Any]:
     }
 
 
-async def confirmed_submit(service: RegistrationService, call_id: str):
+async def read_back_everything(service: RegistrationService, call_id: str) -> int:
+    """Deliver every pending part, as the agent does after each "yes"; returns the version to submit."""
     readback = await service.get_readback(call_id, render_readback)
     assert readback.ready, readback.missing
     assert readback.readback_version is not None
-    return await service.submit(call_id, readback.readback_version)
+    for key in readback.remaining_keys:
+        assert await service.readback_part(call_id, key) is not None
+    return readback.readback_version
+
+
+async def confirmed_submit(service: RegistrationService, call_id: str):
+    return await service.submit(call_id, await read_back_everything(service, call_id))
 
 
 async def test_answers_in_any_order_and_next_missing_tracks_progress(
@@ -110,22 +117,67 @@ async def test_correction_after_readback_forces_a_new_readback_of_the_changed_ch
     call_id = new_call_id()
     await registration.save_fields(call_id, full_draft(last_name="Davies"))
     first = await registration.get_readback(call_id, render_readback)
-    assert first.ready and first.changed_keys == ["identity_contact", "address_extras"]
+    assert first.ready and first.delivering is not None
+    assert (first.delivering.key, first.remaining_keys) == (IDENTITY_CONTACT, ["address_extras"])
+    assert await registration.readback_part(call_id, "address_extras") is not None
 
     await registration.save_fields(call_id, {"last_name": "Davis"})  # "it's D-A-V-I-S, not D-A-V-I-E-S"
 
     stale = await registration.submit(call_id, first.readback_version)  # type: ignore[arg-type]
     assert stale.status is SubmitStatus.STALE_READBACK
     assert stale.patient is None
+    assert await registration.readback_part(call_id, "address_extras") is None  # the old readback is void
 
     second = await registration.get_readback(call_id, render_readback)
-    assert second.changed_keys == [IDENTITY_CONTACT]  # only the name chunk is re-read
-    assert "D-A-V-I-S" in second.chunks[0].text
+    assert second.delivering is not None and second.delivering.key == IDENTITY_CONTACT
+    assert second.remaining_keys == []  # the address was already read and has not changed
+    assert "D-A-V-I-S" in second.delivering.text
     assert second.readback_version != first.readback_version
 
     done = await registration.submit(call_id, second.readback_version)  # type: ignore[arg-type]
     assert done.status is SubmitStatus.CREATED
     assert done.patient is not None and done.patient.last_name == "Davis"
+
+
+async def test_cannot_save_until_every_part_has_been_read_aloud(registration: RegistrationService) -> None:
+    """Live-call finding: the model can try to save after the caller has heard only part of it."""
+    call_id = new_call_id()
+    await registration.save_fields(call_id, full_draft())
+    readback = await registration.get_readback(call_id, render_readback)  # delivers part one only
+
+    early = await registration.submit(call_id, readback.readback_version)  # type: ignore[arg-type]
+    assert early.status is SubmitStatus.READBACK_INCOMPLETE
+    assert early.unread_parts == ["address_extras"] and early.patient is None
+
+    part = await registration.readback_part(call_id, "address_extras")
+    assert part is not None and part.remaining_keys == []
+    done = await registration.submit(call_id, readback.readback_version)  # type: ignore[arg-type]
+    assert done.status is SubmitStatus.CREATED
+
+
+async def test_a_part_never_read_is_still_pending_after_a_correction_elsewhere(
+    registration: RegistrationService,
+) -> None:
+    """Live-call finding: a correction during part one must not make part two disappear."""
+    call_id = new_call_id()
+    await registration.save_fields(call_id, full_draft())
+    await registration.get_readback(call_id, render_readback)  # part one read; address never read
+    await registration.save_fields(call_id, {"last_name": "Teste"})
+
+    again = await registration.get_readback(call_id, render_readback)
+    assert again.delivering is not None and again.delivering.key == IDENTITY_CONTACT
+    assert again.remaining_keys == ["address_extras"]
+
+
+async def test_asking_for_the_readback_again_reads_everything_again(
+    registration: RegistrationService,
+) -> None:
+    call_id = new_call_id()
+    await registration.save_fields(call_id, full_draft())
+    await read_back_everything(registration, call_id)
+    again = await registration.get_readback(call_id, render_readback)
+    assert again.delivering is not None and again.delivering.key == IDENTITY_CONTACT
+    assert again.remaining_keys == ["address_extras"]
 
 
 async def test_submit_without_a_readback_is_refused(registration: RegistrationService) -> None:
@@ -147,9 +199,7 @@ async def test_double_submit_is_idempotent(registration: RegistrationService, uo
     call_id = new_call_id()
     draft = full_draft()
     await registration.save_fields(call_id, draft)
-    readback = await registration.get_readback(call_id, render_readback)
-    version = readback.readback_version
-    assert version is not None
+    version = await read_back_everything(registration, call_id)
 
     first = await registration.submit(call_id, version)
     again = await registration.submit(call_id, version)  # the model retries, or the webhook is redelivered
@@ -179,9 +229,7 @@ async def test_database_failure_returns_a_retryable_error_then_recovers(
 ) -> None:
     call_id = new_call_id()
     await registration.save_fields(call_id, full_draft())
-    readback = await registration.get_readback(call_id, render_readback)
-    version = readback.readback_version
-    assert version is not None
+    version = await read_back_everything(registration, call_id)
 
     with monkeypatch.context() as patch:
 
@@ -190,9 +238,10 @@ async def test_database_failure_returns_a_retryable_error_then_recovers(
 
         patch.setattr(PatientRepository, "create", broken)
         failed = await registration.submit(call_id, version)
+        assert failed.status is SubmitStatus.ERROR and failed.retryable  # worth one retry
+        failed_again = await registration.submit(call_id, version)
+        assert failed_again.status is SubmitStatus.ERROR and not failed_again.retryable  # give up politely
 
-    assert failed.status is SubmitStatus.ERROR
-    assert failed.retryable
     async with uow(transactional=False) as repos:
         session = await repos.call_sessions.get(call_id)
         assert session is not None
@@ -213,13 +262,13 @@ async def test_slow_save_times_out_with_an_error_not_silence(
     service = RegistrationService(uow, tool_timeout_seconds=0.3)
     call_id = new_call_id()
     await service.save_fields(call_id, full_draft())
-    readback = await service.get_readback(call_id, render_readback)
+    version = await read_back_everything(service, call_id)
 
     async def stalled(self: PatientRepository, *_: Any, **__: Any) -> Any:
         await asyncio.sleep(5)
 
     monkeypatch.setattr(PatientRepository, "create", stalled)
-    result = await service.submit(call_id, readback.readback_version)  # type: ignore[arg-type]
+    result = await service.submit(call_id, version)
     assert result.status is SubmitStatus.ERROR and result.retryable
 
 

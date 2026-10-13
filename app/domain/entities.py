@@ -50,6 +50,7 @@ class ReadbackChunk(BaseModel):
     key: str
     text: str
     fields: list[str] = Field(default_factory=list)
+    delivered: bool = False  # has this exact text been read aloud to the caller?
 
 
 class CallSummary(BaseModel):

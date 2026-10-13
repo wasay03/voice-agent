@@ -27,5 +27,6 @@ class SubmitStatus(StrEnum):
     UPDATED = "updated"
     ALREADY_SAVED = "already_saved"
     STALE_READBACK = "stale_readback"
+    READBACK_INCOMPLETE = "readback_incomplete"
     INVALID = "invalid"
     ERROR = "error"

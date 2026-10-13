@@ -58,8 +58,15 @@ class ReadbackResult:
     ready: bool
     missing: list[str] = field(default_factory=list)
     chunks: list[ReadbackChunk] = field(default_factory=list)
-    changed_keys: list[str] = field(default_factory=list)
+    delivering: ReadbackChunk | None = None  # the chunk to read aloud now
+    remaining_keys: list[str] = field(default_factory=list)  # still to read after that one
     readback_version: int | None = None
+
+
+@dataclass
+class ReadbackPart:
+    chunk: ReadbackChunk
+    remaining_keys: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -69,6 +76,7 @@ class SubmitResult:
     mode: RegistrationMode = RegistrationMode.CREATE
     errors: list[FieldError] = field(default_factory=list)
     missing: list[str] = field(default_factory=list)
+    unread_parts: list[str] = field(default_factory=list)
     retryable: bool = False
 
 
@@ -195,10 +203,11 @@ class RegistrationService:
         language: str = "en",
         caller_number: str | None = None,
     ) -> ReadbackResult:
-        """Render the draft for the ear and remember it, so submit can check nothing changed.
+        """Render the draft for the ear, remember it, and hand out the first chunk to read aloud.
 
-        `changed_keys` lists the chunks whose text differs from the previous readback (all of
-        them the first time), so the agent re-reads only what a correction touched.
+        A chunk counts as delivered once it has been handed out with its current text. Chunks
+        delivered earlier and untouched by a correction are not repeated; submit is refused until
+        every chunk has been delivered, so no detail is saved without having been read back.
         """
         async with self._uow() as repos:
             session = await ensure_session(repos, call_id, caller_number)
@@ -207,27 +216,46 @@ class RegistrationService:
                 return ReadbackResult(ready=False, missing=missing)
 
             chunks = render(session.draft, language)
-            previous = {c.get("key"): c.get("text") for c in (session.readback_chunks or [])}
-            changed = [c.key for c in chunks if previous.get(c.key) != c.text]
+            previous = {c.get("key"): c for c in (session.readback_chunks or [])}
+            for chunk in chunks:
+                old = previous.get(chunk.key)
+                chunk.delivered = bool(old and old.get("text") == chunk.text and old.get("delivered"))
+            pending = [c for c in chunks if not c.delivered]
+            if not pending:  # asked again with nothing new: read everything from the start
+                for chunk in chunks:
+                    chunk.delivered = False
+                pending = list(chunks)
+            delivering = pending[0]
+            delivering.delivered = True
             await repos.call_sessions.save_readback(call_id, session.draft_version, chunks)
 
         return ReadbackResult(
-            ready=True, chunks=chunks, changed_keys=changed, readback_version=session.draft_version
+            ready=True,
+            chunks=chunks,
+            delivering=delivering,
+            remaining_keys=[c.key for c in pending[1:]],
+            readback_version=session.draft_version,
         )
 
     async def readback_part(
         self, call_id: str, key: str, *, caller_number: str | None = None
-    ) -> ReadbackChunk | None:
-        """One chunk of the stored readback, or None if there is no current readback (the draft
-        changed since, or `key` is unknown) and get_readback must be called again."""
+    ) -> ReadbackPart | None:
+        """Hand out one more chunk of the stored readback and mark it delivered.
+
+        None if there is no current readback (the draft changed since, or `key` is unknown), in
+        which case get_readback must be called again.
+        """
         async with self._uow() as repos:
             session = await ensure_session(repos, call_id, caller_number)
-        if session.readback_version is None or session.readback_version != session.draft_version:
-            return None
-        for raw in session.readback_chunks or []:
-            if raw.get("key") == key:
-                return ReadbackChunk.model_validate(raw)
-        return None
+            if session.readback_version is None or session.readback_version != session.draft_version:
+                return None
+            chunks = [ReadbackChunk.model_validate(raw) for raw in session.readback_chunks or []]
+            chunk = next((c for c in chunks if c.key == key), None)
+            if chunk is None:
+                return None
+            chunk.delivered = True
+            await repos.call_sessions.save_readback(call_id, session.readback_version, chunks)
+        return ReadbackPart(chunk=chunk, remaining_keys=[c.key for c in chunks if not c.delivered])
 
     # -- saving ----------------------------------------------------------------------------
 
@@ -250,8 +278,9 @@ class RegistrationService:
             )
         except Exception as exc:  # database down, timeout, anything else: the caller must hear an outcome
             log.error("registration.failed", call_id=call_id, error=type(exc).__name__, detail=str(exc))
-            await self._record_failure(call_id, f"{type(exc).__name__}: {exc}")
-            return SubmitResult(SubmitStatus.ERROR, retryable=True)
+            repeated = await self._record_failure(call_id, f"{type(exc).__name__}: {exc}")
+            # One retry is worth it; after a second failure the caller should be let go politely.
+            return SubmitResult(SubmitStatus.ERROR, retryable=not repeated)
 
     async def _submit(self, call_id: str, readback_version: int, caller_number: str | None) -> SubmitResult:
         async with self._uow() as repos:
@@ -263,6 +292,10 @@ class RegistrationService:
 
             if readback_version != session.readback_version or readback_version != session.draft_version:
                 return SubmitResult(SubmitStatus.STALE_READBACK, mode=session.mode)
+
+            unread = [c["key"] for c in session.readback_chunks or [] if not c.get("delivered")]
+            if unread:  # the model tried to save before every part was read to the caller
+                return SubmitResult(SubmitStatus.READBACK_INCOMPLETE, mode=session.mode, unread_parts=unread)
 
             missing = missing_required(session.draft)
             if missing:
@@ -324,13 +357,21 @@ class RegistrationService:
             return SubmitResult(SubmitStatus.ERROR, mode=RegistrationMode.UPDATE, retryable=True)
         return SubmitResult(SubmitStatus.UPDATED, patient=patient, mode=RegistrationMode.UPDATE)
 
-    async def _record_failure(self, call_id: str, reason: str) -> None:
-        """Best effort, in a fresh transaction: the one that failed has rolled back."""
+    async def _record_failure(self, call_id: str, reason: str) -> bool:
+        """Mark the session failed, in a fresh transaction (the failed one has rolled back).
+
+        Returns True if an earlier save attempt on this call had already failed. Best effort: if
+        even this cannot be written, the error log line is the record.
+        """
         try:
             async with self._uow() as repos:
+                session = await repos.call_sessions.lock(call_id)
+                repeated = session is not None and session.failure_reason is not None
                 await repos.call_sessions.mark_failed(call_id, reason[:500])
+            return repeated
         except Exception as exc:
             log.error("registration.failure_not_recorded", call_id=call_id, error=type(exc).__name__)
+            return False
 
     # -- duplicates and restarts -----------------------------------------------------------
 

@@ -133,17 +133,33 @@ async def test_a_whole_registration_through_the_webhook(client: httpx.AsyncClien
 
     (readback,) = await tools(client, call_id, ("get_readback", {}))
     assert readback["ready"] is True
-    assert readback["parts"] == ["identity_contact", "address_extras"]
+    assert (readback["part"], readback["next_part"]) == ("identity_contact", "address_extras")
     assert "D-A-V-I-S" in readback["speak"] and "Jane Davis" in readback["speak"]
     assert readback["speak"].endswith("Is that all correct?")
-    (second_part,) = await tools(client, call_id, ("get_readback", {"part": "address_extras"}))
-    assert "Austin, Texas" in second_part["speak"]
 
-    (done,) = await tools(
+    # Saving before the address has been read is refused and points at the unread part.
+    (early,) = await tools(
         client, call_id, ("submit_registration", {"readback_version": readback["readback_version"]})
     )
+    assert (early["status"], early["next_part"]) == ("readback_incomplete", "address_extras")
+
+    (second_part,) = await tools(client, call_id, ("get_readback", {"part": "address_extras"}))
+    assert "Austin, Texas" in second_part["speak"] and second_part["next_part"] is None
+    assert "submit_registration" in second_part["next"]
+
+    saved = await post(
+        client,
+        tool_call(call_id, ("submit_registration", {"readback_version": readback["readback_version"]})),
+    )
+    (entry,) = saved.json()["results"]
+    done = json.loads(entry["result"])
     assert done["status"] == "created"
-    assert done["say"] == "You're all set, Jane."
+    # The closing line is spoken by Vapi, which then hangs up; neither is left to the model.
+    assert entry["message"] == {
+        "type": "request-complete",
+        "content": "You're all set, Jane. Thanks for calling, and have a great day. Goodbye.",
+        "endCallAfterSpokenEnabled": True,
+    }
 
     report = await post(client, fixture("end_of_call_report", call_id))
     assert report.status_code == 200
@@ -216,6 +232,7 @@ async def test_stale_submit_and_start_over_through_the_webhook(client: httpx.Asy
     }
     await tools(client, call_id, ("save_fields", {"fields": complete}))
     (readback,) = await tools(client, call_id, ("get_readback", {}))
+    await tools(client, call_id, ("get_readback", {"part": readback["next_part"]}))
     await tools(client, call_id, ("save_fields", {"fields": {"city": "Dallas"}}))
 
     (stale,) = await tools(
@@ -224,7 +241,8 @@ async def test_stale_submit_and_start_over_through_the_webhook(client: httpx.Asy
     assert stale["status"] == "stale_readback"
 
     (again,) = await tools(client, call_id, ("get_readback", {}))
-    assert again["parts"] == ["address_extras"] and "Dallas" in again["speak"]  # only the changed chunk
+    assert again["part"] == "address_extras" and "Dallas" in again["speak"]  # only the changed part
+    assert again["next_part"] is None
 
     (reset,) = await tools(client, call_id, ("reset_registration", {}))
     assert reset["cleared"] is True
@@ -272,3 +290,35 @@ async def test_reading_a_part_after_a_change_asks_for_a_fresh_readback(client: h
     assert outdated["error"] == "readback_outdated" and "speak" not in outdated
     (unknown,) = await tools(client, call_id, ("get_readback", {"part": "nonsense"}))
     assert unknown["error"] == "readback_outdated"
+
+
+async def test_second_save_failure_apologises_and_ends_the_call(
+    client: httpx.AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.core.errors import DatabaseUnavailableError
+    from app.db.repositories.patient_repository import PatientRepository
+
+    call_id = new_call_id()
+    complete = {
+        "first_name": "Jane", "last_name": "Doe", "date_of_birth": "1980-03-05", "sex": "Female",
+        "phone_number": unique_phone(), "address_line_1": "1 Main St", "city": "Austin", "state": "TX",
+        "zip_code": "78701",
+    }  # fmt: skip
+    await tools(client, call_id, ("save_fields", {"fields": complete}))
+    (readback,) = await tools(client, call_id, ("get_readback", {}))
+    await tools(client, call_id, ("get_readback", {"part": readback["next_part"]}))
+
+    async def down(self: PatientRepository, *_: Any, **__: Any) -> Any:
+        raise DatabaseUnavailableError()
+
+    monkeypatch.setattr(PatientRepository, "create", down)
+    submit = tool_call(call_id, ("submit_registration", {"readback_version": readback["readback_version"]}))
+
+    first = (await post(client, submit)).json()["results"][0]
+    assert json.loads(first["result"])["retryable"] is True
+    assert "message" not in first  # the model says the retry line and tries once more
+
+    second = (await post(client, submit)).json()["results"][0]
+    assert json.loads(second["result"])["status"] == "error"
+    assert second["message"]["endCallAfterSpokenEnabled"] is True
+    assert "wasn't able to save" in second["message"]["content"]

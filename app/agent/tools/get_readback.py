@@ -1,10 +1,10 @@
-"""get_readback: confirm the draft with the caller, one chunk at a time.
+"""get_readback: confirm the draft with the caller, one part at a time.
 
-The chunk is spoken by Vapi verbatim (the `speak` key becomes the tool result's
+Each part is spoken by Vapi verbatim (the `speak` key becomes the tool result's
 `request-complete` message), not by the model. In the first live test the model paraphrased
-the first chunk down to the name only, so the date of birth, sex and phone were never confirmed.
-Speaking the server's text directly makes "what the caller confirmed" and "what gets saved" the
-same thing by construction.
+the first part down to the name only, so the date of birth, sex and phone were never confirmed.
+Speaking the server's text directly makes "what the caller heard" and "what gets saved" the same
+thing by construction, and the server refuses to save until every part has been read.
 """
 
 from typing import Any
@@ -19,11 +19,20 @@ from app.services.registration_service import RegistrationService
 CONFIRM_QUESTION = "Is that all correct?"
 
 
+def _next_step(remaining: list[str]) -> dict[str, Any]:
+    if remaining:
+        return {
+            "next_part": remaining[0],
+            "next": f"When the caller says yes, call get_readback with part={remaining[0]!r}.",
+        }
+    return {"next_part": None, "next": "When the caller says yes, call submit_registration."}
+
+
 class GetReadbackArgs(BaseModel):
     part: str | None = Field(
         default=None,
-        description="Leave empty to start the readback. To read the next part, pass the next key "
-        "from `parts` of the previous get_readback result.",
+        description="Leave empty to start the readback, or after a correction. To read the next part, "
+        "pass `next_part` from the previous get_readback result.",
     )
 
 
@@ -31,10 +40,10 @@ class GetReadbackTool(Tool):
     name = "get_readback"
     description = (
         "Read the collected details back to the caller for confirmation. The text is spoken for you, "
-        "exactly as written, followed by 'Is that all correct?'; do not repeat or paraphrase it, and say "
-        "nothing before calling this tool. Call it with no part when next_missing is empty and the "
-        "optional-information offer has been answered, and again with no part after any correction. "
-        "If `parts` lists more than one key, call it again with the next key once the caller says yes."
+        "exactly as written, followed by 'Is that all correct?'. Do not repeat or paraphrase it, and say "
+        "nothing yourself in the turn where you call this tool. Call it with no part when next_missing "
+        "is empty and the optional-information offer has been answered, and again with no part after "
+        "any correction. Follow `next` in the result for what to do once the caller says yes."
     )
     Args = GetReadbackArgs
 
@@ -43,25 +52,26 @@ class GetReadbackTool(Tool):
 
     async def run(self, ctx: ToolContext, args: GetReadbackArgs) -> dict[str, Any]:
         if args.part:
-            chunk = await self._registration.readback_part(
+            part = await self._registration.readback_part(
                 ctx.call_id, args.part, caller_number=ctx.caller_number
             )
-            if chunk is None:
-                return {"error": "readback_outdated", "next": "call get_readback with no part"}
-            return {"part": chunk.key, "speak": f"{chunk.text} {CONFIRM_QUESTION}"}
+            if part is None:
+                return {"error": "readback_outdated", "next": "Call get_readback with no part."}
+            return {
+                "part": part.chunk.key,
+                "speak": f"{part.chunk.text} {CONFIRM_QUESTION}",
+                **_next_step(part.remaining_keys),
+            }
 
         result = await self._registration.get_readback(
             ctx.call_id, render_readback, language=ctx.language, caller_number=ctx.caller_number
         )
-        if not result.ready:
+        if not result.ready or result.delivering is None:
             return {"ready": False, "missing": result.missing}
-        # After a correction only the chunks whose text changed need confirming again.
-        keys = result.changed_keys or [c.key for c in result.chunks]
-        first = next(c for c in result.chunks if c.key == keys[0])
         return {
             "ready": True,
             "readback_version": result.readback_version,
-            "parts": keys,
-            "speaking": first.key,
-            "speak": f"{first.text} {CONFIRM_QUESTION}",
+            "part": result.delivering.key,
+            "speak": f"{result.delivering.text} {CONFIRM_QUESTION}",
+            **_next_step(result.remaining_keys),
         }
