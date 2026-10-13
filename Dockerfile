@@ -21,7 +21,7 @@ COPY sql ./sql
 RUN useradd --create-home --uid 10001 appuser
 USER appuser
 
-EXPOSE 8000
+EXPOSE 8080
 
 # Migrations run first; a failed migration stops the deploy before traffic is switched.
-CMD ["sh", "-c", "python -m app.db.migrator && exec uvicorn --factory app.main:create_app --host 0.0.0.0 --port ${PORT:-8000} --proxy-headers --forwarded-allow-ips='*'"]
+CMD ["sh", "-c", "python -m app.db.migrator && exec uvicorn --factory app.main:create_app --host 0.0.0.0 --port ${PORT:-8080} --proxy-headers --forwarded-allow-ips='*'"]
