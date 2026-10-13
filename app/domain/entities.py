@@ -42,3 +42,24 @@ class DuplicateCandidate(BaseModel):
     patient_id: UUID
     first_name: str
     last_name: str
+
+
+class ReadbackChunk(BaseModel):
+    """One spoken piece of the confirmation readback. `text` is read to the caller verbatim."""
+
+    key: str
+    text: str
+    fields: list[str] = Field(default_factory=list)
+
+
+class CallSummary(BaseModel):
+    """A past call as listed for a patient (transcript, outcome)."""
+
+    call_id: str
+    started_at: datetime
+    ended_at: datetime | None = None
+    status: CallStatus
+    ended_reason: str | None = None
+    summary: str | None = None
+    transcript: str | None = None
+    recording_url: str | None = None

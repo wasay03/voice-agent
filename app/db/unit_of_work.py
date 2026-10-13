@@ -18,12 +18,14 @@ from dataclasses import dataclass
 import asyncpg
 
 from app.db.client import DatabaseClient
+from app.db.repositories.call_session_repository import CallSessionRepository
 from app.db.repositories.patient_repository import PatientRepository
 
 
 @dataclass(frozen=True)
 class Repositories:
     patients: PatientRepository
+    call_sessions: CallSessionRepository
 
 
 class UnitOfWork:
@@ -31,7 +33,10 @@ class UnitOfWork:
         self._db = db
 
     def _bind(self, conn: asyncpg.Connection | None) -> Repositories:
-        return Repositories(patients=PatientRepository(self._db, conn))
+        return Repositories(
+            patients=PatientRepository(self._db, conn),
+            call_sessions=CallSessionRepository(self._db, conn),
+        )
 
     @asynccontextmanager
     async def __call__(

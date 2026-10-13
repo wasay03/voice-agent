@@ -7,6 +7,7 @@ a container. Never point it at production: tests write data.
 import asyncio
 import itertools
 import os
+import uuid
 from collections.abc import AsyncIterator, Iterator
 
 import httpx
@@ -91,3 +92,7 @@ def patient_payload(**overrides: object) -> dict[str, object]:
         "zip_code": "78701",
         **overrides,
     }
+
+
+def new_call_id() -> str:
+    return f"call-{uuid.uuid4().hex[:12]}"
