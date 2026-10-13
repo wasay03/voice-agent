@@ -1,0 +1,12 @@
+{
+  "message": {
+    "type": "tool-calls",
+    "call": {"id": "{{CALL_ID}}", "customer": {"number": "{{CALLER}}"}},
+    "toolWithToolCallList": [
+      {"name": "save_fields", "toolCall": {"id": "call_flat_1", "parameters": {"fields": {"city": "austin"}}}}
+    ],
+    "toolCallList": [
+      {"id": "call_flat_1", "name": "save_fields", "parameters": {"fields": {"city": "austin"}}}
+    ]
+  }
+}

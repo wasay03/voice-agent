@@ -1,0 +1,13 @@
+{
+  "message": {
+    "type": "end-of-call-report",
+    "endedReason": "assistant-ended-call",
+    "call": {"id": "{{CALL_ID}}", "customer": {"number": "{{CALLER}}"}},
+    "artifact": {
+      "transcript": "AI: Hi, thanks for calling Riverside Family Clinic.\nUser: Hi, I'd like to register.",
+      "recordingUrl": "https://storage.vapi.ai/{{CALL_ID}}.wav",
+      "messages": [{"role": "assistant", "message": "Hi, thanks for calling Riverside Family Clinic."}]
+    },
+    "analysis": {"summary": "Caller registered as a new patient."}
+  }
+}

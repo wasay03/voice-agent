@@ -1,0 +1,7 @@
+{
+  "message": {
+    "type": "status-update",
+    "status": "in-progress",
+    "call": {"id": "{{CALL_ID}}", "type": "inboundPhoneCall", "customer": {"number": "{{CALLER}}"}}
+  }
+}

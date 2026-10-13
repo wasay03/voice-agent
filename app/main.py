@@ -12,6 +12,7 @@ from app.container import Container
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
 from app.domain import clock
+from app.telephony.vapi.router import router as vapi_router
 
 log = get_logger(__name__)
 
@@ -42,4 +43,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(patients.router)
+    app.include_router(vapi_router)
     return app

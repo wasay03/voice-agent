@@ -67,3 +67,6 @@ SAVE_FAILED = (
     "Someone from the clinic will follow up with you. Thank you for calling."
 )
 SAVE_WORKING = "One moment while I save that."
+
+# Spoken when a tool itself fails (bad arguments, timeout, bug): keeps the call moving.
+TOOL_TROUBLE = "Sorry, I had a little trouble with that. Could you say that again?"
