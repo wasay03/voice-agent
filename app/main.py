@@ -11,6 +11,7 @@ from app.api.routes import health
 from app.container import Container
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
+from app.domain import clock
 
 log = get_logger(__name__)
 
@@ -18,6 +19,7 @@ log = get_logger(__name__)
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or get_settings()
     configure_logging(settings.log_level, json_logs=settings.json_logs)
+    clock.configure(settings.clinic_tz)
     container = Container.build(settings)
 
     @asynccontextmanager
