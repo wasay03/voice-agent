@@ -111,6 +111,8 @@ def test_readback_text_changes_when_a_field_changes() -> None:
         ("phone_number", "phone_length", {"digit_count": 9}, "nine digits"),
         ("phone_number", "phone_length", {"digit_count": 3}, "three digits"),
         ("zip_code", "zip_invalid", {}, "five digits"),
+        ("phone_number", "caller_id_not_us", {}, "outside the U.S."),
+        ("phone_number", "caller_id_unavailable", {}, "don't see a number"),
         ("state", "state_invalid", {}, "Which state"),
         ("city", "required", {}, "I still need your city"),
         ("email", "email_invalid", {}, "spell it out"),

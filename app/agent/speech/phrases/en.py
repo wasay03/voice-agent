@@ -38,6 +38,8 @@ _HINTS = {
     "Could you say the whole number again, including the area code?",
     "phone_invalid": "That doesn't sound like a valid number. Could you say it again with the area code?",
     "caller_id_unavailable": "I don't see a number on this call. What's the best number to reach you?",
+    "caller_id_not_us": "It looks like you're calling from a number outside the U.S., and I need a "
+    "ten-digit U.S. number for the record. What's the best U.S. number to reach you?",
     "email_invalid": "I couldn't make that into an email address. Could you spell it out for me?",
     "state_invalid": "Which state is that in?",
     "zip_invalid": "ZIP codes are five digits. What's yours?",

@@ -282,6 +282,12 @@ async def test_caller_id_shortcut_uses_the_number_on_the_call(registration: Regi
     assert blocked.saved == []
     assert blocked.errors[0].code == "caller_id_unavailable"
 
+    # Live-call finding: a caller from abroad was told "I don't see a number on this call".
+    abroad = await registration.save_fields(
+        new_call_id(), {"phone_number": "CALLER_ID"}, caller_number="+923223753242"
+    )
+    assert abroad.saved == [] and abroad.errors[0].code == "caller_id_not_us"
+
 
 async def test_returning_caller_is_offered_the_existing_record_and_can_update_it(
     registration: RegistrationService, uow: UnitOfWork

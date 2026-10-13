@@ -159,10 +159,14 @@ class RegistrationService:
                     data["phone_number"] = digits
                 else:
                     del data["phone_number"]
+                    # A blocked number and a non-US number need different words: telling a caller
+                    # from abroad "I don't see a number" is simply wrong.
                     errors.append(
                         FieldError(
-                            "phone_number", "caller_id_unavailable", "No usable caller ID on this call."
+                            "phone_number", "caller_id_not_us", "The caller's number is not a US number."
                         )
+                        if session.caller_number
+                        else FieldError("phone_number", "caller_id_unavailable", "No caller ID on this call.")
                     )
 
             outcome = validate_fields(data, today=clinic_today())
