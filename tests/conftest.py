@@ -5,6 +5,7 @@ a container. Never point it at production: tests write data.
 """
 
 import asyncio
+import itertools
 import os
 from collections.abc import AsyncIterator, Iterator
 
@@ -13,7 +14,9 @@ import pytest
 from testcontainers.community.postgres import PostgresContainer
 
 from app.core.config import Settings
+from app.db.client import DatabaseClient
 from app.db.migrator import migrate
+from app.db.unit_of_work import UnitOfWork
 from app.main import create_app
 
 TEST_API_KEY = "test-api-key"
@@ -52,3 +55,39 @@ async def client(settings: Settings) -> AsyncIterator[httpx.AsyncClient]:
         httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as http,
     ):
         yield http
+
+
+@pytest.fixture
+async def db(database_url: str) -> AsyncIterator[DatabaseClient]:
+    client = DatabaseClient(database_url)
+    await client.connect()
+    yield client
+    await client.close()
+
+
+@pytest.fixture
+def uow(db: DatabaseClient) -> UnitOfWork:
+    return UnitOfWork(db)
+
+
+_phone_counter = itertools.count(1000)
+
+
+def unique_phone() -> str:
+    """A valid, unused NANP number per call so tests never collide on duplicate detection."""
+    return f"512555{next(_phone_counter):04d}"
+
+
+def patient_payload(**overrides: object) -> dict[str, object]:
+    return {
+        "first_name": "Test",
+        "last_name": "Patient",
+        "date_of_birth": "1985-07-04",
+        "sex": "Female",
+        "phone_number": unique_phone(),
+        "address_line_1": "1 Main St",
+        "city": "Austin",
+        "state": "TX",
+        "zip_code": "78701",
+        **overrides,
+    }

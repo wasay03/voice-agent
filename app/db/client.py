@@ -140,7 +140,7 @@ class DatabaseClient:
         except AppError:
             raise
         except Exception as exc:
-            if isinstance(exc, asyncpg.PostgresError | _UNAVAILABLE | TimeoutError):
+            if isinstance(exc, (asyncpg.PostgresError, TimeoutError, *_UNAVAILABLE)):
                 raise translate_db_error(exc) from exc
             raise
 
