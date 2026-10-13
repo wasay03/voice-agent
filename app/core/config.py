@@ -38,6 +38,10 @@ class Settings(BaseSettings):
     api_key: SecretStr
     vapi_webhook_secret: SecretStr
 
+    # Vapi management (only scripts/sync_assistant.py uses these; the running service never does)
+    vapi_api_key: SecretStr | None = None
+    vapi_phone_number_id: str | None = None
+
     # Clinic / agent
     public_base_url: str = ""
     clinic_name: str = "Riverside Family Clinic"

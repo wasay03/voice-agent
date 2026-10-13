@@ -1,0 +1,109 @@
+# Vapi assistant, as config-as-code. scripts/sync_assistant.py loads this, fills in the prompt,
+# the tool definitions (exported from app/agent/tools) and the server URL, then creates or
+# updates the assistant. ${VAR} values come from the environment / .env.
+#
+# Field names follow Vapi's current OpenAPI spec (api.vapi.ai/api-json). Note that idle-call
+# handling is done with `hooks` there; there is no silenceTimeoutSeconds field any more.
+
+firstMessageMode: assistant-speaks-first
+firstMessageInterruptionsEnabled: false
+maxDurationSeconds: 600            # a stuck call cannot drain credit
+
+model:
+  provider: openai
+  model: gpt-4.1                   # fast, reliable tool calling; compared in Phase 9
+  temperature: 0.3
+  maxTokens: 300
+
+transcriber:
+  provider: deepgram
+  model: nova-3
+  language: en
+  smartFormat: true
+  numerals: true                   # "five one two" -> 512: phone numbers, ZIP codes, dates
+  keyterm:                         # vocabulary speech-to-text otherwise gets wrong
+    - ${CLINIC_NAME}
+    - Medicare
+    - Medicaid
+    - Aetna
+    - Cigna
+    - Humana
+    - UnitedHealthcare
+    - Blue Cross Blue Shield
+    - Kaiser Permanente
+    - Tricare
+
+voice:
+  provider: deepgram
+  model: aura-2
+  voiceId: thalia
+
+startSpeakingPlan:
+  waitSeconds: 0.4
+  smartEndpointingEnabled: livekit # waits through "umm" and mid-number pauses
+
+stopSpeakingPlan:
+  numWords: 2                      # barge-in: stop after two words from the caller
+  voiceSeconds: 0.2
+  backoffSeconds: 1
+
+# Only the events the service handles are sent to the webhook.
+serverMessages: [tool-calls, status-update, end-of-call-report, hang]
+
+server:
+  url: ${PUBLIC_BASE_URL}/webhooks/vapi
+  timeoutSeconds: 15
+  headers:
+    X-Vapi-Secret: ${VAPI_WEBHOOK_SECRET}
+
+# Spoken by Vapi around tool calls so the caller never sits in silence.
+tool_messages:
+  default:
+    - type: request-response-delayed
+      timingMilliseconds: 3500
+      content: Just a moment.
+    - type: request-failed
+      content: Sorry, I'm having a little trouble. Could you say that again?
+  submit_registration:
+    - type: request-start
+      content: One moment while I save that.
+
+# Idle callers: a nudge, then a polite goodbye. (triggerMaxCount stops repeats.)
+hooks:
+  - "on": customer.speech.timeout
+    name: idle-nudge
+    options: {timeoutSeconds: 8, triggerMaxCount: 1, triggerResetMode: onUserSpeech}
+    do:
+      - type: say
+        exact: ["Are you still there?", "Hello? Are you still there?"]
+  - "on": customer.speech.timeout
+    name: idle-hangup
+    options: {timeoutSeconds: 25, triggerMaxCount: 1}
+    do:
+      - type: say
+        exact: "I'm not hearing anything, so I'll let you go. Please call back whenever you're ready. Goodbye."
+      - type: tool
+        tool: {type: endCall}
+
+analysisPlan:
+  minMessagesThreshold: 1
+  summaryPlan:
+    enabled: true
+    messages:
+      - role: system
+        content: >-
+          You summarise patient-registration phone calls for clinic staff in two sentences:
+          the outcome (registered a new patient, updated an existing record, caller hung up
+          before finishing, or could not be saved) and anything staff should follow up on.
+          Do not repeat addresses, dates of birth or phone numbers.
+      - role: user
+        content: "Transcript:\n\n{{transcript}}"
+  structuredDataPlan: {enabled: false}
+  successEvaluationPlan: {enabled: false}
+
+artifactPlan:
+  recordingEnabled: true
+  recordingFormat: mp3
+
+metadata:
+  project: voice-patient-registration

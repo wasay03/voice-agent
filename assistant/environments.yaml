@@ -1,0 +1,8 @@
+# Two assistants so prompt experiments never touch the number reviewers call.
+dev:
+  name: ava-dev
+  attach_phone_number: false      # tested with Vapi's web call / chat; no phone number
+prod:
+  name: ava-prod
+  attach_phone_number: true       # attached to VAPI_PHONE_NUMBER_ID
+  confirm: true                   # sync shows a diff and asks before pushing
