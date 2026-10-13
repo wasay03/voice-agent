@@ -1,0 +1,38 @@
+# Local development: app + Postgres 18 (same major version as Neon).
+services:
+  db:
+    image: postgres:18
+    environment:
+      POSTGRES_USER: intake
+      POSTGRES_PASSWORD: intake
+      POSTGRES_DB: intake
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U intake -d intake"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
+  app:
+    build: .
+    env_file: .env
+    environment:
+      ENV: dev
+      DATABASE_URL: postgresql://intake:intake@db:5432/intake
+    command: >
+      sh -c "python -m app.db.migrator &&
+             uvicorn --factory app.main:create_app --host 0.0.0.0 --port 8000 --reload"
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/srv/app
+      - ./sql:/srv/sql
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
