@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.middleware import request_context
-from app.api.routes import health, patients
+from app.api.routes import calls, health, patients
 from app.container import Container
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
@@ -43,5 +43,6 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(patients.router)
+    app.include_router(calls.router)
     app.include_router(vapi_router)
     return app

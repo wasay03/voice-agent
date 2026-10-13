@@ -179,6 +179,15 @@ async def test_a_whole_registration_through_the_webhook(client: httpx.AsyncClien
     assert session.recording_url == f"https://storage.vapi.ai/{call_id}.wav"
     assert [c.call_id for c in calls] == [call_id]
 
+    # ...and the transcript is available through the REST API.
+    api_calls = await client.get(
+        f"/patients/{patient['patient_id']}/calls", headers={"X-API-Key": TEST_API_KEY}
+    )
+    assert api_calls.status_code == 200
+    (entry,) = api_calls.json()["data"]
+    assert (entry["call_id"], entry["status"]) == (call_id, "completed")
+    assert "Riverside Family Clinic" in entry["transcript"]
+
 
 async def test_a_dropped_call_is_abandoned_with_no_patient(
     client: httpx.AsyncClient, uow: UnitOfWork

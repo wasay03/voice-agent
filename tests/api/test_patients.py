@@ -159,3 +159,11 @@ async def test_seed_patient_is_available(client: httpx.AsyncClient) -> None:
     response = await client.get("/patients/01920000-0000-7000-8000-000000000001", headers=AUTH)
     assert response.status_code == 200
     assert response.json()["data"]["last_name"] == "Doe"
+
+
+async def test_calls_for_a_patient(client: httpx.AsyncClient) -> None:
+    created = await create(client)
+    response = await client.get(f"/patients/{created['patient_id']}/calls", headers=AUTH)
+    assert response.status_code == 200 and response.json()["data"] == []  # created via the API, no call
+    assert (await client.get(f"/patients/{uuid4()}/calls", headers=AUTH)).status_code == 404
+    assert (await client.get(f"/patients/{created['patient_id']}/calls")).status_code == 401

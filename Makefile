@@ -1,7 +1,7 @@
 # The project virtualenv is ./venv (uv manages it).
 export UV_PROJECT_ENVIRONMENT := venv
 
-.PHONY: install dev db-up db-down migrate test lint fmt smoke
+.PHONY: install dev db-up db-down migrate test lint fmt smoke sync-dev sync-prod
 
 install:          ## install all dependencies into ./venv
 	uv sync
@@ -31,3 +31,9 @@ fmt:
 
 smoke:            ## end-to-end checks against BASE_URL (default: local)
 	./scripts/smoke_test.sh
+
+sync-dev:         ## create/update the ava-dev assistant in Vapi (no phone number)
+	uv run python scripts/sync_assistant.py --env dev
+
+sync-prod:        ## diff, confirm, update ava-prod and attach the phone number
+	uv run python scripts/sync_assistant.py --env prod
