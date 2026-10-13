@@ -34,7 +34,11 @@ def _validation_details(errors: list[dict[str, Any]]) -> tuple[int, list[dict[st
     for err in errors:
         loc = list(err.get("loc", ()))
         source = loc[0] if loc else "body"
-        if source in ("path", "query", "header") or err.get("type") in _UNREADABLE_TYPES:
+        if (
+            source in ("path", "query", "header")
+            or err.get("type") in _UNREADABLE_TYPES
+            or (loc == ["body"] and err.get("type") == "missing")
+        ):
             status = 400
         field = ".".join(str(p) for p in loc[1:]) or None
         message = str(err.get("msg", "Invalid value")).removeprefix("Value error, ")

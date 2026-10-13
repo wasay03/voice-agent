@@ -7,7 +7,7 @@ from fastapi import FastAPI
 
 from app.api.exception_handlers import register_exception_handlers
 from app.api.middleware import request_context
-from app.api.routes import health
+from app.api.routes import health, patients
 from app.container import Container
 from app.core.config import Settings, get_settings
 from app.core.logging import configure_logging, get_logger
@@ -41,4 +41,5 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.middleware("http")(request_context)
     register_exception_handlers(app)
     app.include_router(health.router)
+    app.include_router(patients.router)
     return app
