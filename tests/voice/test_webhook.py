@@ -133,7 +133,11 @@ async def test_a_whole_registration_through_the_webhook(client: httpx.AsyncClien
 
     (readback,) = await tools(client, call_id, ("get_readback", {}))
     assert readback["ready"] is True
-    assert "D-A-V-I-S" in readback["chunks"][0] and "Jane Davis" in readback["chunks"][0]
+    assert readback["parts"] == ["identity_contact", "address_extras"]
+    assert "D-A-V-I-S" in readback["speak"] and "Jane Davis" in readback["speak"]
+    assert readback["speak"].endswith("Is that all correct?")
+    (second_part,) = await tools(client, call_id, ("get_readback", {"part": "address_extras"}))
+    assert "Austin, Texas" in second_part["speak"]
 
     (done,) = await tools(
         client, call_id, ("submit_registration", {"readback_version": readback["readback_version"]})
@@ -220,7 +224,7 @@ async def test_stale_submit_and_start_over_through_the_webhook(client: httpx.Asy
     assert stale["status"] == "stale_readback"
 
     (again,) = await tools(client, call_id, ("get_readback", {}))
-    assert len(again["chunks"]) == 1 and "Dallas" in again["chunks"][0]  # only the changed chunk
+    assert again["parts"] == ["address_extras"] and "Dallas" in again["speak"]  # only the changed chunk
 
     (reset,) = await tools(client, call_id, ("reset_registration", {}))
     assert reset["cleared"] is True
@@ -231,3 +235,40 @@ async def test_stale_submit_and_start_over_through_the_webhook(client: httpx.Asy
 async def test_caller_id_shortcut_through_the_webhook(client: httpx.AsyncClient) -> None:
     (result,) = await tools(client, new_call_id(), ("save_fields", {"fields": {"phone_number": "CALLER_ID"}}))
     assert result["saved"] == ["phone_number"] and result["errors"] == []
+
+
+async def test_readback_is_spoken_verbatim_by_vapi_not_the_model(client: httpx.AsyncClient) -> None:
+    """The chunk goes in the tool result's `message`, which Vapi speaks instead of a model reply."""
+    call_id = new_call_id()
+    complete = {
+        "first_name": "Jane", "last_name": "Doe", "date_of_birth": "1980-03-05", "sex": "Female",
+        "phone_number": unique_phone(), "address_line_1": "1 Main St", "city": "Austin", "state": "TX",
+        "zip_code": "78701",
+    }  # fmt: skip
+    await tools(client, call_id, ("save_fields", {"fields": complete}))
+    response = await post(client, tool_call(call_id, ("get_readback", {})))
+    (entry,) = response.json()["results"]
+    assert entry["message"]["type"] == "request-complete"
+    spoken = entry["message"]["content"]
+    for detail in ("Jane Doe", "D-O-E", "March 5th, 1980", "female", "Is that all correct?"):
+        assert detail in spoken
+    assert json.loads(entry["result"])["speak"] == spoken  # the model sees what was said
+
+    save = await post(client, tool_call(call_id, ("save_fields", {"fields": {"city": "Waco"}})))
+    assert "message" not in save.json()["results"][0]  # ordinary tools let the model talk
+
+
+async def test_reading_a_part_after_a_change_asks_for_a_fresh_readback(client: httpx.AsyncClient) -> None:
+    call_id = new_call_id()
+    complete = {
+        "first_name": "Jane", "last_name": "Doe", "date_of_birth": "1980-03-05", "sex": "Female",
+        "phone_number": unique_phone(), "address_line_1": "1 Main St", "city": "Austin", "state": "TX",
+        "zip_code": "78701",
+    }  # fmt: skip
+    await tools(client, call_id, ("save_fields", {"fields": complete}))
+    await tools(client, call_id, ("get_readback", {}))
+    await tools(client, call_id, ("save_fields", {"fields": {"zip_code": "78702"}}))
+    (outdated,) = await tools(client, call_id, ("get_readback", {"part": "address_extras"}))
+    assert outdated["error"] == "readback_outdated" and "speak" not in outdated
+    (unknown,) = await tools(client, call_id, ("get_readback", {"part": "nonsense"}))
+    assert unknown["error"] == "readback_outdated"

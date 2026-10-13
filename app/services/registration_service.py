@@ -215,6 +215,20 @@ class RegistrationService:
             ready=True, chunks=chunks, changed_keys=changed, readback_version=session.draft_version
         )
 
+    async def readback_part(
+        self, call_id: str, key: str, *, caller_number: str | None = None
+    ) -> ReadbackChunk | None:
+        """One chunk of the stored readback, or None if there is no current readback (the draft
+        changed since, or `key` is unknown) and get_readback must be called again."""
+        async with self._uow() as repos:
+            session = await ensure_session(repos, call_id, caller_number)
+        if session.readback_version is None or session.readback_version != session.draft_version:
+            return None
+        for raw in session.readback_chunks or []:
+            if raw.get("key") == key:
+                return ReadbackChunk.model_validate(raw)
+        return None
+
     # -- saving ----------------------------------------------------------------------------
 
     async def submit(

@@ -57,8 +57,13 @@ server:
     X-Vapi-Secret: ${VAPI_WEBHOOK_SECRET}
 
 # Spoken by Vapi around tool calls so the caller never sits in silence.
+# Without a request-start message Vapi says a default filler ("One moment", "Just a sec", ...)
+# before every tool call; in the first live test that put a filler in front of almost every turn.
+# Tools answer in about a second, so the start message is empty and the delayed one covers slow cases.
 tool_messages:
   default:
+    - type: request-start
+      content: ""
     - type: request-response-delayed
       timingMilliseconds: 3500
       content: Just a moment.

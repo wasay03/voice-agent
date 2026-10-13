@@ -60,12 +60,17 @@ class VapiDispatcher:
         )
         # In order, never concurrently: the model may emit several calls that touch one draft.
         for invocation in tool_invocations(raw):
+            entry: dict[str, Any] = {"name": invocation.name, "toolCallId": invocation.id}
             if ctx is None:
-                payload = _NO_CALL_ID
+                entry["result"] = _NO_CALL_ID
             else:
                 result = await self._tools.execute(invocation.name, invocation.arguments, ctx)
-                payload = json.dumps(result, default=str)
-            results.append({"name": invocation.name, "toolCallId": invocation.id, "result": payload})
+                entry["result"] = json.dumps(result, default=str)
+                # `speak` is said verbatim by Vapi instead of a model-generated reply. It stays in
+                # the result too, so the model knows exactly what the caller just heard.
+                if isinstance(result.get("speak"), str):
+                    entry["message"] = {"type": "request-complete", "content": result["speak"]}
+            results.append(entry)
         return {"results": results}
 
     async def _status_update(self, message: StatusUpdate) -> None:
